@@ -1,0 +1,6 @@
+@HighwayMonitor.Api_HostAddress = http://localhost:5090
+
+GET {{HighwayMonitor.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

@@ -1,0 +1,89 @@
+services:
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: highway-sqlserver
+    ports:
+      - "1433:1433"
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "Highway@123456"
+      MSSQL_PID: "Developer"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Highway@123456' -No -Q \"IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = 'HighwayMonitorDb') CREATE DATABASE HighwayMonitorDb; SELECT name FROM sys.databases WHERE name = 'HighwayMonitorDb'\" | grep -q HighwayMonitorDb"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 45s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: highway-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: highway_user
+      RABBITMQ_DEFAULT_PASS: Highway@123456
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  liquibase:
+    image: liquibase/liquibase:4.27
+    container_name: highway-liquibase
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    volumes:
+      - ./infra/liquibase:/liquibase/changelog-files
+    command: >
+      --defaultsFile=/liquibase/changelog-files/liquibase.properties
+      --changeLogFile=changelog/db.changelog-master.xml
+      --searchPath=/liquibase/changelog-files
+      update
+
+  api:
+    build:
+      context: ./src
+      dockerfile: HighwayMonitor.Api/Dockerfile
+    container_name: highway-api
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=highway_user
+      - RabbitMQ__Password=Highway@123456
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./src
+      dockerfile: HighwayMonitor.Worker/Dockerfile
+    container_name: highway-worker
+    environment:
+      - RabbitMQ__Host=rabbitmq
+      - RabbitMQ__Username=highway_user
+      - RabbitMQ__Password=Highway@123456
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=HighwayMonitorDb;User Id=sa;Password=Highway@123456;TrustServerCertificate=True;
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      liquibase:
+        condition: service_completed_successfully
+
+volumes:
+  sqlserver_data:
+  rabbitmq_data:

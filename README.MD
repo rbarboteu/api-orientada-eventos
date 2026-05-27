@@ -1,6 +1,6 @@
 # Highway Monitor 
 
-> Um sistema de monitoramento rodovi�rio de alta disponibilidade constru�do com Arquitetura Orientada a Eventos (EDA) e Microsservi�os � projetado para escala real e resili�ncia operacional.
+> Um sistema de monitoramento rodoviário de alta disponibilidade construído com Arquitetura Orientada a Eventos (EDA) e Microsserviços — projetado para escala real e resiliência operacional.
 
 [![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3.13-FF6600?style=flat-square&logo=rabbitmq)](https://www.rabbitmq.com/)
@@ -10,73 +10,72 @@
 
 ---
 
-## Vis�o Geral
+## Visão Geral
 
-O Highway Monitor � um sistema de backend para recebimento e processamento em tempo real de relat�rios de inspe��o e acidentes rodovi�rios enviados por agentes de campo. O sistema foi projetado em torno do **processamento ass�ncrono de eventos**: a API de ingest�o responde em milissegundos, enquanto toda a l�gica de neg�cios roda em segundo plano atrav�s de servi�os de worker dedicados.
+O Highway Monitor é um sistema de backend para recebimento e processamento em tempo real de relatórios de inspeção e acidentes rodoviários enviados por agentes de campo. O sistema foi projetado em torno do **processamento assíncrono de eventos**: a API de ingestão responde em milissegundos, enquanto toda a lógica de negócios roda em segundo plano através de serviços de worker dedicados.
 
-O projeto demonstra padr�es de n�vel de produ��o comumente exigidos em vagas internacionais de engenharia de backend:
+O projeto demonstra padrões de nível de produção comumente exigidos em vagas internacionais de engenharia de backend:
 
 - **Arquitetura Orientada a Eventos (EDA)** com produtores e consumidores desacoplados
-- **Processamento ass�ncrono de mensagens** via RabbitMQ e MassTransit
+- **Processamento assíncrono de mensagens** via RabbitMQ e MassTransit
 - **Infraestrutura conteinerizada** orquestrada com Docker Compose
-- **Versionamento de banco de dados** via arquivos de migra��o do Liquibase
-- **Sanitiza��o de dados no backend** � os dados brutos de campo s�o limpos e validados no worker, nunca no cliente
+- **Versionamento de banco de dados** via arquivos de migração do Liquibase
+- **Sanitização de dados no backend** — os dados brutos de campo são limpos e validados no worker, nunca no cliente
 
 ---
 
 ## Arquitetura
 
 ```
-???????????????????????????????????????????????????????
-?                  Docker Compose                      ?
-?                                                      ?
-?  ???????????????     ????????????????????????????   ?
-?  ?   API de    ???????        RabbitMQ           ?   ?
-?  ?  Ingest�o   ?     ?  ???????????????????????? ?   ?
-?  ?  (Minimal   ?     ?  ?  inspecoes-queue      ? ?   ?
-?  ?   API)      ?     ?  ?  acidentes-queue      ? ?   ?
-?  ?             ?     ?  ???????????????????????? ?   ?
-?  ? POST /api/  ?     ????????????????????????????   ?
-?  ?  inspecoes  ?                  ?                  ?
-?  ? POST /api/  ?     ????????????????????????????   ?
-?  ?  acidentes  ?     ?      Worker Services       ?   ?
-?  ?             ?     ?  ???????????????????????? ?   ?
-?  ? Retorna     ?     ?  ? Inspections Worker   ? ?   ?
-?  ? HTTP 202    ?     ?  ? � Valida a ordem dos ? ?   ?
-?  ???????????????     ?  ?   passos do checklist? ?   ?
-?                      ?  ???????????????????????? ?   ?
-?                      ?  ? Accidents Worker     ? ?   ?
-?                      ?  ? � Sanitiza CPF/docs  ? ?   ?
-?                      ?  ? � Aplica regras de   ? ?   ?
-?                      ?  ?   neg�cio da ARTESP   ? ?   ?
-?                      ?  ???????????????????????? ?   ?
-?                      ????????????????????????????   ?
-?                                   ?                  ?
-?  ?????????????????????????????????????????????????  ?
-?  ?  SQL Server 2022 (schema gerenciado por Liquibase)?  ?
-?  ?  Inspecoes � ItensChecklist � Acidentes � Vitimas? ?
-?  ??????????????????????????????????????????????????  ?
-???????????????????????????????????????????????????????
+┌─────────────────────────────────────────────────────────┐
+│                     Docker Compose                      │
+│                                                         │
+│  ┌──────────────┐     ┌───────────────────────────┐    │
+│  │  API de      │────▶│         RabbitMQ           │    │
+│  │  Ingestão    │     │  ┌─────────────────────┐   │    │
+│  │  (Minimal    │     │  │  inspecoes-queue     │   │    │
+│  │   API)       │     │  │  acidentes-queue     │   │    │
+│  │              │     │  └─────────────────────┘   │    │
+│  │ POST /api/   │     └──────────────┬────────────┘    │
+│  │  inspecoes   │                    │                  │
+│  │ POST /api/   │     ┌──────────────▼────────────┐    │
+│  │  acidentes   │     │      Worker Services       │    │
+│  │              │     │  ┌─────────────────────┐   │    │
+│  │ ↩ HTTP 202   │     │  │  Inspections Worker  │   │    │
+│  └──────────────┘     │  │  · Valida checklist  │   │    │
+│                        │  └─────────────────────┘   │    │
+│                        │  ┌─────────────────────┐   │    │
+│                        │  │  Accidents Worker    │   │    │
+│                        │  │  · Sanitiza CPF/docs │   │    │
+│                        │  │  · Regras ARTESP     │   │    │
+│                        │  └─────────────────────┘   │    │
+│                        └──────────────┬────────────┘    │
+│                                       │                  │
+│  ┌────────────────────────────────────▼──────────────┐  │
+│  │         SQL Server 2022  (schema via Liquibase)    │  │
+│  │     Inspecoes · ItensChecklist · Acidentes · Vitimas│  │
+│  └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ### Por que Orientado a Eventos?
 
-A API de ingest�o e os workers de processamento s�o **completamente desacoplados**. A API n�o sabe quantos workers existem, o que eles fazem ou se est�o rodando. Um pico nos relat�rios de acidentes n�o bloqueia o processamento das inspe��es � eles vivem em filas separadas. Adicionar um novo worker (ex: notifica��es, relat�rios) exige zero altera��es na API.
+A API de ingestão e os workers de processamento são **completamente desacoplados**. A API não sabe quantos workers existem, o que eles fazem ou se estão rodando. Um pico nos relatórios de acidentes não bloqueia o processamento das inspeções — eles vivem em filas separadas. Adicionar um novo worker (ex: notificações, relatórios) exige zero alterações na API.
 
 ---
 
-## Stack Tecnol�gica
+## Stack Tecnológica
 
-| Camada | Tecnologia | Por qu�? |
+| Camada | Tecnologia | Por quê? |
 |---|---|---|
-| API de Ingest�o | .NET 9 Minimal API | Baixo overhead, resposta r�pida com HTTP 202 |
-| Message broker | RabbitMQ 3.13 | Filas dur�veis, canais separados por dom�nio |
-| Biblioteca de Mensageria | MassTransit 8.3 | Abstrai retry, DLQ, ACK/NACK e serializa��o |
-| Servi�o Worker | .NET 9 Background Service | Processo de longa execu��o, sem overhead de HTTP |
-| ORM de Banco de Dados | Dapper | SQL expl�cito, performance previs�vel |
-| Banco de Dados | SQL Server 2022 | Integridade referencial, restri��es de FK |
-| Versionamento de DB | Liquibase 4.27 | Schema como c�digo, reproduz�vel entre ambientes |
-| Infraestrutura | Docker + Docker Compose | Um �nico comando sobe o ambiente completo |
+| API de Ingestão | .NET 9 Minimal API | Baixo overhead, resposta rápida com HTTP 202 |
+| Message broker | RabbitMQ 3.13 | Filas duráveis, canais separados por domínio |
+| Biblioteca de Mensageria | MassTransit 8.3 | Abstrai retry, DLQ, ACK/NACK e serialização |
+| Serviço Worker | .NET 9 Background Service | Processo de longa execução, sem overhead de HTTP |
+| ORM de Banco de Dados | Dapper | SQL explícito, performance previsível |
+| Banco de Dados | SQL Server 2022 | Integridade referencial, restrições de FK |
+| Versionamento de DB | Liquibase 4.27 | Schema como código, reproduzível entre ambientes |
+| Infraestrutura | Docker + Docker Compose | Um único comando sobe o ambiente completo |
 
 ---
 
@@ -84,44 +83,44 @@ A API de ingest�o e os workers de processamento s�o **completamente desacoplados
 
 ```
 highway-monitor/
-??? docker-compose.yml              # Defini��o completa da infraestrutura
-??? infra/
-?   ??? liquibase/
-?       ??? liquibase.properties    # Configura��o de conex�o do DB
-?       ??? changelog/
-?           ??? db.changelog-master.xml
-?           ??? 002-create-table-inspecoes.sql
-?           ??? 003-create-table-checklist.sql
-?           ??? 004-create-table-acidentes.sql
-?           ??? 005-create-table-vitimas.sql
-??? src/
-    ??? HighwayMonitor.sln
-    ??? HighwayMonitor.Contracts/   # Contratos de eventos compartilhados (records)
-    ?   ??? InspecaoRecebidaEvent.cs
-    ?   ??? AcidenteRecebidoEvent.cs
-    ??? HighwayMonitor.Api/         # API de Ingest�o
-    ?   ??? Program.cs
-    ?   ??? Dockerfile
-    ??? HighwayMonitor.Worker/      # Processadores de background
-        ??? Program.cs
-        ??? Consumers/
-        ?   ??? InspecaoConsumer.cs
-        ?   ??? AcidenteConsumer.cs
-        ??? Repositories/
-        ?   ??? InspecaoRepository.cs
-        ?   ??? AcidenteRepository.cs
-        ??? Dockerfile
+├── docker-compose.yml
+├── infra/
+│   └── liquibase/
+│       ├── liquibase.properties
+│       └── changelog/
+│           ├── db.changelog-master.xml
+│           ├── 002-create-table-inspecoes.sql
+│           ├── 003-create-table-checklist.sql
+│           ├── 004-create-table-acidentes.sql
+│           └── 005-create-table-vitimas.sql
+└── src/
+    ├── HighwayMonitor.sln
+    ├── HighwayMonitor.Contracts/
+    │   ├── InspecaoRecebidaEvent.cs
+    │   └── AcidenteRecebidoEvent.cs
+    ├── HighwayMonitor.Api/
+    │   ├── Program.cs
+    │   └── Dockerfile
+    └── HighwayMonitor.Worker/
+        ├── Program.cs
+        ├── Consumers/
+        │   ├── InspecaoConsumer.cs
+        │   └── AcidenteConsumer.cs
+        ├── Repositories/
+        │   ├── InspecaoRepository.cs
+        │   └── AcidenteRepository.cs
+        └── Dockerfile
 ```
 
 ---
 
-## Como Come�ar
+## Como Começar
 
-### Pr�-requisitos
+### Pré-requisitos
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop) (com containers Linux habilitados)
 
-Apenas isso. N�o � necess�rio instalar o .NET SDK, SQL Server ou RabbitMQ diretamente na sua m�quina.
+Apenas isso. Não é necessário instalar o .NET SDK, SQL Server ou RabbitMQ diretamente na sua máquina.
 
 ### Executando o sistema completo
 
@@ -131,40 +130,40 @@ cd highway-monitor
 docker compose up --build
 ```
 
-Este �nico comando ir�:
+Este único comando irá:
 
-1. Iniciar o **SQL Server 2022** e aguardar at� que esteja saud�vel
+1. Iniciar o **SQL Server 2022** e aguardar até que esteja saudável
 2. Criar o banco de dados `HighwayMonitorDb` automaticamente
-3. Executar as migra��es do **Liquibase** para criar todas as tabelas
+3. Executar as migrações do **Liquibase** para criar todas as tabelas
 4. Iniciar o **RabbitMQ** com o painel de gerenciamento (Management UI)
-5. Buildar e iniciar a **API de Ingest�o** na porta `8080`
+5. Buildar e iniciar a **API de Ingestão** na porta `8080`
 6. Buildar e iniciar o **Worker Service** conectado a ambas as filas
 
-Aguarde cerca de 45 a 60 segundos na primeira execu��o para que o SQL Server inicialize completamente.
+> Aguarde cerca de 45–60 segundos na primeira execução para que o SQL Server inicialize completamente.
 
-### Verificar se tudo est� rodando
+### Verificar se tudo está rodando
 
 ```bash
 docker compose ps
 ```
 
-Todos os servi�os devem aparecer como `running` (rodando) ou `healthy` (saud�vel).
+Todos os serviços devem aparecer como `running` ou `healthy`.
 
-| Servi�o | URL |
+| Serviço | URL |
 |---|---|
-| API de Ingest�o | http://localhost:8080 |
-| RabbitMQ Management | http://localhost:15672 (usu�rio: `highway_user` / senha: `Highway@123456`) |
-| SQL Server | `localhost,1433` (usu�rio: `sa` / senha: `Highway@123456`) |
+| API de Ingestão | http://localhost:8080 |
+| RabbitMQ Management | http://localhost:15672 (usuário: `highway_user` / senha: `Highway@123456`) |
+| SQL Server | `localhost,1433` (usuário: `sa` / senha: `Highway@123456`) |
 
 ---
 
-## Refer�ncia da API
+## Referência da API
 
 ### POST `/api/inspecoes`
 
-Recebe um relat�rio de inspe��o rodovi�ria enviado por um agente de campo.
+Recebe um relatório de inspeção rodoviária enviado por um agente de campo.
 
-**Corpo da requisi��o (Request body):**
+**Request body:**
 ```json
 {
   "rodovia": "SP-280",
@@ -172,8 +171,8 @@ Recebe um relat�rio de inspe��o rodovi�ria enviado por um agente de campo.
   "kmFinal": "46",
   "fiscalId": "F-001",
   "checklist": [
-    { "ordem": 1, "descricao": "Verificar sinaliza��o", "conforme": true },
-    { "ordem": 2, "descricao": "Verificar ilumina��o", "conforme": false },
+    { "ordem": 1, "descricao": "Verificar sinalização", "conforme": true },
+    { "ordem": 2, "descricao": "Verificar iluminação", "conforme": false },
     { "ordem": 3, "descricao": "Verificar asfalto", "conforme": true }
   ]
 }
@@ -183,27 +182,27 @@ Recebe um relat�rio de inspe��o rodovi�ria enviado por um agente de campo.
 ```json
 {
   "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "mensagem": "Inspe��o recebida e em processamento."
+  "mensagem": "Inspeção recebida e em processamento."
 }
 ```
 
-**Regra de neg�cio:** O worker valida se os itens do checklist s�o processados na sequ�ncia estrita da sua `ordem`. Se qualquer passo estiver fora de ordem, a mensagem � rejeitada e enviada para a fila de erros / dead letter queue (`inspecoes-queue_error`).
+**Regra de negócio:** O worker valida se os itens do checklist são processados na sequência estrita da sua `ordem`. Se qualquer passo estiver fora de ordem, a mensagem é rejeitada e enviada para a dead letter queue (`inspecoes-queue_error`).
 
 ---
 
 ### POST `/api/acidentes`
 
-Recebe um relat�rio de acidente com dados brutos de identifica��o das v�timas.
+Recebe um relatório de acidente com dados brutos de identificação das vítimas.
 
-**Corpo da requisi��o (Request body):**
+**Request body:**
 ```json
 {
   "rodovia": "SP-280",
   "km": "45",
-  "tipoAcidente": "Colis�o",
+  "tipoAcidente": "Colisão",
   "vitimas": [
     {
-      "nomeRaw": "  Jo�o da Silva  ",
+      "nomeRaw": "  João da Silva  ",
       "documentoRaw": "123.456.789-09",
       "tipoDocumento": "CPF"
     }
@@ -219,11 +218,11 @@ Recebe um relat�rio de acidente com dados brutos de identifica��o das v�timas.
 }
 ```
 
-**Regra de neg�cio:** Toda a sanitiza��o de dados acontece no worker � nunca no cliente. O worker remove espa�os em branco dos nomes, elimina caracteres n�o num�ricos dos documentos e formata os CPFs para o padr�o `XXX.XXX.XXX-XX` antes de persistir.
+**Regra de negócio:** Toda a sanitização de dados acontece no worker — nunca no cliente. O worker remove espaços em branco dos nomes, elimina caracteres não numéricos dos documentos e formata os CPFs para o padrão `XXX.XXX.XXX-XX` antes de persistir.
 
 ---
 
-## Esquema do Banco de Dados (Schema)
+## Esquema do Banco de Dados
 
 ```sql
 Inspecoes
@@ -238,7 +237,7 @@ Inspecoes
 
 ItensChecklist
   Id          UNIQUEIDENTIFIER  PK
-  InspecaoId  UNIQUEIDENTIFIER  FK ? Inspecoes(Id)
+  InspecaoId  UNIQUEIDENTIFIER  FK → Inspecoes(Id)
   Ordem       INT               NOT NULL
   Descricao   NVARCHAR(255)
   Conforme    BIT
@@ -254,55 +253,55 @@ Acidentes
 
 Vitimas
   Id              UNIQUEIDENTIFIER  PK
-  AcidenteId      UNIQUEIDENTIFIER  FK ? Acidentes(Id)
+  AcidenteId      UNIQUEIDENTIFIER  FK → Acidentes(Id)
   NomeSanitizado  NVARCHAR(200)
   Documento       NVARCHAR(20)
   TipoDocumento   NVARCHAR(10)
 ```
 
-A coluna `Ordem` em `ItensChecklist` � `NOT NULL` por design do schema � a regra de neg�cio � refor�ada a n�vel de banco de dados, n�o apenas no c�digo. O �ndice composto em `(InspecaoId, Ordem)` garante que a query de valida��o de sequ�ncia seja perform�tica em larga escala.
+A coluna `Ordem` em `ItensChecklist` é `NOT NULL` por design — a regra de negócio é reforçada a nível de banco de dados, não apenas no código. O índice composto em `(InspecaoId, Ordem)` garante performance na validação de sequência em larga escala.
 
 ---
 
-## Decis�es Chave de Arquitetura
+## Decisões Chave de Arquitetura
 
 ### 1. API retorna HTTP 202, nunca 200
 
-A API n�o salva nada diretamente no banco de dados. Ela publica um evento e retorna `202 Accepted`, comunicando que a requisi��o foi recebida e ser� processada. Essa � a sem�ntica correta para opera��es ass�ncronas � um `200 OK` implicaria que o trabalho j� foi conclu�do.
+A API não salva nada diretamente no banco de dados. Ela publica um evento e retorna `202 Accepted` — a semântica correta para operações assíncronas. Um `200 OK` implicaria que o trabalho já foi concluído.
 
-### 2. Filas separadas por dom�nio
+### 2. Filas separadas por domínio
 
-A `inspecoes-queue` e a `acidentes-queue` s�o intencionalmente separadas. Um pico de tr�fego em relat�rios de acidentes (ex: um grande engavetamento) n�o atrasa o processamento das inspe��es de rotina. O isolamento de filas � um padr�o fundamental de resili�ncia.
+A `inspecoes-queue` e a `acidentes-queue` são intencionalmente separadas. Um pico de acidentes (ex: um grande engavetamento) não atrasa o processamento das inspeções de rotina. Isolamento de filas é um padrão fundamental de resiliência.
 
-### 3. Contratos em um projeto dedicado
+### 3. Contratos em projeto dedicado
 
-O `HighwayMonitor.Contracts` � uma classlib. A API e o Worker n�o dependem diretamente um do outro, mas sim desse projeto de contratos. Essa � a arquitetura ideal para deploys independentes: voc� pode implantar uma nova vers�o do Worker sem precisar reinstalar ou reabrir a API.
+O `HighwayMonitor.Contracts` é uma classlib. A API e o Worker não dependem um do outro — dependem apenas dos contratos. Isso permite deploys independentes: uma nova versão do Worker não exige redeployar a API.
 
-### 4. Sanitiza��o centralizada no Worker
+### 4. Sanitização centralizada no Worker
 
-Os dados brutos das v�timas (CPFs desformatados, nomes com espa�os extras, letras mai�sculas/min�sculas inconsistentes) chegam direto dos dispositivos m�veis. N�o h� `cleanVal()` ou pr�-processamento no frontend. O Worker � a �nica fonte de verdade para a qualidade dos dados � tornando as regras audit�veis, test�veis e centralizadas.
+Dados brutos das vítimas (CPFs desformatados, nomes com espaços, casing inconsistente) chegam direto dos dispositivos móveis. O Worker é a única fonte de verdade para qualidade dos dados — tornando as regras auditáveis, testáveis e centralizadas.
 
 ### 5. Liquibase em vez de EF Migrations
 
-As migra��es do Entity Framework s�o fortemente acopladas ao runtime da aplica��o. O Liquibase � independente de tecnologia: ele roda em um container separado, possui suporte nativo a rollback e exp�e as altera��es de schema como SQL puro no controle de vers�o � permitindo a revis�o de qualquer pessoa do time, incluindo DBAs.
+EF Migrations são acopladas ao runtime da aplicação. O Liquibase roda em container separado, tem suporte nativo a rollback e expõe as mudanças de schema como SQL puro no controle de versão — revisável por qualquer pessoa do time, incluindo DBAs.
 
 ---
 
-## Fluxo de Trabalho de Desenvolvimento
+## Fluxo de Desenvolvimento Local
 
-Para rodar a API e o Worker localmente (fora do Docker) visando uma itera��o mais r�pida:
+Para rodar fora do Docker com iteração mais rápida:
 
 ```bash
-# Inicia apenas a infraestrutura b�sica
+# Sobe apenas a infraestrutura
 docker compose up sqlserver rabbitmq liquibase -d
 
-# Executa a API localmente
+# API (terminal 1)
 cd src/HighwayMonitor.Api
 dotnet run
 
-# Executa o Worker localmente (em outro terminal)
+# Worker (terminal 2)
 cd src/HighwayMonitor.Worker
 dotnet run
 ```
 
-Os arquivos `appsettings.json` locais j� est�o pr�-configurados para se conectar ao `localhost` de ambos os servi�os.
+Os arquivos `appsettings.json` já estão pré-configurados para `localhost`.

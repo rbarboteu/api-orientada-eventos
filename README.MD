@@ -1,169 +1,167 @@
-# Highway Monitor 
+# 🛣️ Highway Monitor
 
-> Um sistema de monitoramento rodoviário de alta disponibilidade construído com Arquitetura Orientada a Eventos (EDA) e Microsserviços — projetado para escala real e resiliência operacional.
+> API de ingestão + workers assíncronos para relatórios de inspeção e acidentes rodoviários, construída com **Arquitetura Orientada a Eventos** em .NET 9, RabbitMQ e SQL Server.
 
 [![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
 [![RabbitMQ](https://img.shields.io/badge/RabbitMQ-3.13-FF6600?style=flat-square&logo=rabbitmq)](https://www.rabbitmq.com/)
+[![MassTransit](https://img.shields.io/badge/MassTransit-8.3-1E88E5?style=flat-square)](https://masstransit.io/)
 [![SQL Server](https://img.shields.io/badge/SQL%20Server-2022-CC2927?style=flat-square&logo=microsoftsqlserver)](https://www.microsoft.com/sql-server)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker)](https://www.docker.com/)
 [![Liquibase](https://img.shields.io/badge/Liquibase-4.27-2962FF?style=flat-square)](https://www.liquibase.org/)
 
----
-
-## Visão Geral
-
-O Highway Monitor é um sistema de backend para recebimento e processamento em tempo real de relatórios de inspeção e acidentes rodoviários enviados por agentes de campo. O sistema foi projetado em torno do **processamento assíncrono de eventos**: a API de ingestão responde em milissegundos, enquanto toda a lógica de negócios roda em segundo plano através de serviços de worker dedicados.
-
-O projeto demonstra padrões de nível de produção comumente exigidos em vagas internacionais de engenharia de backend:
-
-- **Arquitetura Orientada a Eventos (EDA)** com produtores e consumidores desacoplados
-- **Processamento assíncrono de mensagens** via RabbitMQ e MassTransit
-- **Infraestrutura conteinerizada** orquestrada com Docker Compose
-- **Versionamento de banco de dados** via arquivos de migração do Liquibase
-- **Sanitização de dados no backend** — os dados brutos de campo são limpos e validados no worker, nunca no cliente
+> 🇺🇸 **TL;DR (English):** event-driven back-end in .NET 9. A Minimal API accepts field reports and returns `202 Accepted` immediately; MassTransit consumers on RabbitMQ validate, sanitize and persist the data to SQL Server with Dapper. The schema is versioned with Liquibase and the whole stack starts with a single `docker compose up`.
 
 ---
 
-## Arquitetura
+## 📌 Destaques
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Docker Compose                      │
-│                                                         │
-│  ┌──────────────┐     ┌───────────────────────────┐    │
-│  │  API de      │────▶│         RabbitMQ           │    │
-│  │  Ingestão    │     │  ┌─────────────────────┐   │    │
-│  │  (Minimal    │     │  │  inspecoes-queue     │   │    │
-│  │   API)       │     │  │  acidentes-queue     │   │    │
-│  │              │     │  └─────────────────────┘   │    │
-│  │ POST /api/   │     └──────────────┬────────────┘    │
-│  │  inspecoes   │                    │                  │
-│  │ POST /api/   │     ┌──────────────▼────────────┐    │
-│  │  acidentes   │     │      Worker Services       │    │
-│  │              │     │  ┌─────────────────────┐   │    │
-│  │ ↩ HTTP 202   │     │  │  Inspections Worker  │   │    │
-│  └──────────────┘     │  │  · Valida checklist  │   │    │
-│                        │  └─────────────────────┘   │    │
-│                        │  ┌─────────────────────┐   │    │
-│                        │  │  Accidents Worker    │   │    │
-│                        │  │  · Sanitiza CPF/docs │   │    │
-│                        │  │  · Regras ARTESP     │   │    │
-│                        │  └─────────────────────┘   │    │
-│                        └──────────────┬────────────┘    │
-│                                       │                  │
-│  ┌────────────────────────────────────▼──────────────┐  │
-│  │         SQL Server 2022  (schema via Liquibase)    │  │
-│  │     Inspecoes · ItensChecklist · Acidentes · Vitimas│  │
-│  └───────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+- **Event-Driven Architecture**: a API só publica eventos; quem processa são workers desacoplados.
+- **RabbitMQ + MassTransit**: uma fila por domínio, serialização e *error queue* gerenciadas pelo MassTransit.
+- **HTTP 202 Accepted**: a API responde em milissegundos, sem tocar no banco.
+- **Contratos compartilhados** em uma class library (`HighwayMonitor.Contracts`): API e Worker não se conhecem.
+- **Dapper + SQL explícito**: controle total sobre as queries e performance previsível.
+- **Liquibase**: o schema é versionado como código SQL, revisável e reproduzível.
+- **Docker Compose com healthchecks**: banco → migrations → broker → API → worker, na ordem certa e com um comando só.
+
+---
+
+## 🏗️ Arquitetura
+
+```mermaid
+flowchart LR
+    Agente([Agente de campo]) -->|POST /api/inspecoes<br/>POST /api/acidentes| API[Ingestion API<br/>.NET 9 Minimal API]
+    API -->|202 Accepted| Agente
+    API -- InspecaoRecebidaEvent --> Q1[(inspecoes-queue)]
+    API -- AcidenteRecebidoEvent --> Q2[(acidentes-queue)]
+    subgraph RabbitMQ
+      Q1
+      Q2
+    end
+    Q1 --> C1[InspecaoConsumer<br/>valida sequência do checklist]
+    Q2 --> C2[AcidenteConsumer<br/>sanitiza nomes e documentos]
+    C1 -->|Dapper| DB[(SQL Server 2022)]
+    C2 -->|Dapper| DB
+    C1 -. falha .-> E1[(inspecoes-queue_error)]
+    LB[Liquibase] -->|migrations| DB
 ```
 
-### Por que Orientado a Eventos?
+### Fluxo de uma requisição
 
-A API de ingestão e os workers de processamento são **completamente desacoplados**. A API não sabe quantos workers existem, o que eles fazem ou se estão rodando. Um pico nos relatórios de acidentes não bloqueia o processamento das inspeções — eles vivem em filas separadas. Adicionar um novo worker (ex: notificações, relatórios) exige zero alterações na API.
+```mermaid
+sequenceDiagram
+    participant A as Agente de campo
+    participant API as Ingestion API
+    participant MQ as RabbitMQ
+    participant W as Worker (MassTransit)
+    participant DB as SQL Server
+
+    A->>API: POST /api/acidentes (dados brutos)
+    API->>API: validação mínima (Rodovia, Km)
+    API->>MQ: Send AcidenteRecebidoEvent
+    API-->>A: 202 Accepted { id }
+    MQ->>W: entrega a mensagem
+    W->>W: trim nos nomes, CPF → XXX.XXX.XXX-XX
+    W->>DB: INSERT Acidentes + Vitimas
+    W-->>MQ: ACK
+```
+
+### Por que orientado a eventos?
+
+A API de ingestão e os workers são **completamente desacoplados**. A API não sabe quantos workers existem nem se eles estão no ar: se o worker cair, as mensagens ficam na fila e são processadas quando ele voltar. Um pico de acidentes não atrasa as inspeções, porque cada domínio tem a sua fila. Um novo consumidor (notificações, relatórios) entra sem nenhuma mudança na API.
 
 ---
 
-## Stack Tecnológica
+## 🧰 Stack
 
-| Camada | Tecnologia | Por quê? |
+| Camada | Tecnologia | Por quê |
 |---|---|---|
-| API de Ingestão | .NET 9 Minimal API | Baixo overhead, resposta rápida com HTTP 202 |
-| Message broker | RabbitMQ 3.13 | Filas duráveis, canais separados por domínio |
-| Biblioteca de Mensageria | MassTransit 8.3 | Abstrai retry, DLQ, ACK/NACK e serialização |
-| Serviço Worker | .NET 9 Background Service | Processo de longa execução, sem overhead de HTTP |
-| ORM de Banco de Dados | Dapper | SQL explícito, performance previsível |
-| Banco de Dados | SQL Server 2022 | Integridade referencial, restrições de FK |
-| Versionamento de DB | Liquibase 4.27 | Schema como código, reproduzível entre ambientes |
-| Infraestrutura | Docker + Docker Compose | Um único comando sobe o ambiente completo |
+| API de ingestão | .NET 9 Minimal API | Baixo overhead, resposta rápida com `202` |
+| Message broker | RabbitMQ 3.13 | Filas duráveis, separação por domínio |
+| Mensageria | MassTransit 8.3 | Abstrai conexão, serialização, ACK/NACK e error queue |
+| Processamento | .NET 9 Worker Service | Processo de longa duração, sem HTTP |
+| Acesso a dados | Dapper | SQL explícito, performance previsível |
+| Banco | SQL Server 2022 | Integridade referencial e FKs |
+| Versionamento do schema | Liquibase 4.27 | Schema como código, roda em container separado |
+| Infraestrutura | Docker + Docker Compose | Ambiente completo com um comando |
 
 ---
 
-## Estrutura do Projeto
+## 📁 Estrutura
 
 ```
-highway-monitor/
+api-orientada-eventos/
 ├── docker-compose.yml
 ├── infra/
-│   └── liquibase/
-│       ├── liquibase.properties
-│       └── changelog/
-│           ├── db.changelog-master.xml
-│           ├── 002-create-table-inspecoes.sql
-│           ├── 003-create-table-checklist.sql
-│           ├── 004-create-table-acidentes.sql
-│           └── 005-create-table-vitimas.sql
+│   ├── liquibase/
+│   │   ├── liquibase.properties
+│   │   └── changelog/                 # 002..005: Inspecoes, ItensChecklist, Acidentes, Vitimas
+│   └── sqlserver/init.sql
 └── src/
     ├── HighwayMonitor.sln
-    ├── HighwayMonitor.Contracts/
-    │   ├── InspecaoRecebidaEvent.cs
-    │   └── AcidenteRecebidoEvent.cs
-    ├── HighwayMonitor.Api/
-    │   ├── Program.cs
-    │   └── Dockerfile
+    ├── HighwayMonitor.Contracts/      # Eventos e DTOs compartilhados (records)
+    ├── HighwayMonitor.Api/            # Minimal API: valida e publica eventos
     └── HighwayMonitor.Worker/
-        ├── Program.cs
-        ├── Consumers/
-        │   ├── InspecaoConsumer.cs
-        │   └── AcidenteConsumer.cs
-        ├── Repositories/
-        │   ├── InspecaoRepository.cs
-        │   └── AcidenteRepository.cs
-        └── Dockerfile
+        ├── Consumers/                 # InspecaoConsumer, AcidenteConsumer
+        └── Repositories/              # Persistência com Dapper
 ```
 
 ---
 
-## Como Começar
+## ▶️ Como rodar
 
-### Pré-requisitos
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop) (com containers Linux habilitados)
-
-Apenas isso. Não é necessário instalar o .NET SDK, SQL Server ou RabbitMQ diretamente na sua máquina.
-
-### Executando o sistema completo
+**Pré-requisito:** apenas o [Docker Desktop](https://www.docker.com/products/docker-desktop). Não é preciso instalar .NET, SQL Server nem RabbitMQ.
 
 ```bash
-git clone https://github.com/seu-usuario/highway-monitor.git
-cd highway-monitor
+git clone https://github.com/rbarboteu/api-orientada-eventos.git
+cd api-orientada-eventos
 docker compose up --build
 ```
 
-Este único comando irá:
+O Compose sobe tudo na ordem certa:
 
-1. Iniciar o **SQL Server 2022** e aguardar até que esteja saudável
-2. Criar o banco de dados `HighwayMonitorDb` automaticamente
-3. Executar as migrações do **Liquibase** para criar todas as tabelas
-4. Iniciar o **RabbitMQ** com o painel de gerenciamento (Management UI)
-5. Buildar e iniciar a **API de Ingestão** na porta `8080`
-6. Buildar e iniciar o **Worker Service** conectado a ambas as filas
+1. **SQL Server 2022**, com healthcheck que cria o banco `HighwayMonitorDb`.
+2. **Liquibase**, que aplica as migrations e encerra.
+3. **RabbitMQ** com o painel de gerenciamento.
+4. **API** na porta `8080`.
+5. **Worker**, que só inicia depois que as migrations terminam com sucesso.
 
-> Aguarde cerca de 45–60 segundos na primeira execução para que o SQL Server inicialize completamente.
+> Na primeira execução, o SQL Server leva de 45 a 60 segundos para ficar saudável.
 
-### Verificar se tudo está rodando
+| Serviço | Endereço | Credenciais (ambiente local) |
+|---|---|---|
+| API | http://localhost:8080 | — |
+| RabbitMQ Management | http://localhost:15672 | `highway_user` / `Highway@123456` |
+| SQL Server | `localhost,1433` | `sa` / `Highway@123456` |
+
+> As credenciais acima são apenas para desenvolvimento local.
+
+### Teste rápido
 
 ```bash
-docker compose ps
+curl -i -X POST http://localhost:8080/api/acidentes \
+  -H "Content-Type: application/json" \
+  -d '{"rodovia":"SP-280","km":"45","tipoAcidente":"Colisão","vitimas":[{"nomeRaw":"  João da Silva  ","documentoRaw":"12345678909","tipoDocumento":"cpf"}]}'
 ```
 
-Todos os serviços devem aparecer como `running` ou `healthy`.
+Depois, acompanhe o processamento com `docker compose logs -f worker` e veja as mensagens passando no painel do RabbitMQ.
 
-| Serviço | URL |
-|---|---|
-| API de Ingestão | http://localhost:8080 |
-| RabbitMQ Management | http://localhost:15672 (usuário: `highway_user` / senha: `Highway@123456`) |
-| SQL Server | `localhost,1433` (usuário: `sa` / senha: `Highway@123456`) |
+### Desenvolvimento fora do Docker
+
+```bash
+docker compose up sqlserver rabbitmq liquibase -d   # só a infraestrutura
+
+dotnet run --project src/HighwayMonitor.Api          # terminal 1
+dotnet run --project src/HighwayMonitor.Worker       # terminal 2
+```
+
+Os `appsettings.json` já apontam para `localhost`.
 
 ---
 
-## Referência da API
+## 📡 API
 
-### POST `/api/inspecoes`
+### `POST /api/inspecoes`
 
-Recebe um relatório de inspeção rodoviária enviado por um agente de campo.
-
-**Request body:**
 ```json
 {
   "rodovia": "SP-280",
@@ -178,130 +176,99 @@ Recebe um relatório de inspeção rodoviária enviado por um agente de campo.
 }
 ```
 
-**Resposta:** `HTTP 202 Accepted`
+**Resposta:** `202 Accepted`
+
 ```json
-{
-  "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "mensagem": "Inspeção recebida e em processamento."
-}
+{ "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "mensagem": "Inspeção recebida e em processamento." }
 ```
 
-**Regra de negócio:** O worker valida se os itens do checklist são processados na sequência estrita da sua `ordem`. Se qualquer passo estiver fora de ordem, a mensagem é rejeitada e enviada para a dead letter queue (`inspecoes-queue_error`).
+**Regra de negócio:** o checklist precisa formar uma sequência completa `1..N`, sem lacunas nem repetições. Se a sequência estiver quebrada, o consumer lança exceção e o MassTransit move a mensagem para `inspecoes-queue_error`, onde ela fica disponível para análise.
 
----
+### `POST /api/acidentes`
 
-### POST `/api/acidentes`
-
-Recebe um relatório de acidente com dados brutos de identificação das vítimas.
-
-**Request body:**
 ```json
 {
   "rodovia": "SP-280",
   "km": "45",
   "tipoAcidente": "Colisão",
   "vitimas": [
-    {
-      "nomeRaw": "  João da Silva  ",
-      "documentoRaw": "123.456.789-09",
-      "tipoDocumento": "CPF"
-    }
+    { "nomeRaw": "  João da Silva  ", "documentoRaw": "123.456.789-09", "tipoDocumento": "CPF" }
   ]
 }
 ```
 
-**Resposta:** `HTTP 202 Accepted`
-```json
-{
-  "id": "8b3c1a77-4321-4abc-9def-1c2d3e4f5a6b",
-  "mensagem": "Acidente recebido e em processamento."
-}
-```
+**Resposta:** `202 Accepted`
 
-**Regra de negócio:** Toda a sanitização de dados acontece no worker — nunca no cliente. O worker remove espaços em branco dos nomes, elimina caracteres não numéricos dos documentos e formata os CPFs para o padrão `XXX.XXX.XXX-XX` antes de persistir.
+**Regra de negócio:** toda a sanitização acontece no worker, nunca no cliente. Ele remove espaços extras dos nomes, mantém só os dígitos dos documentos, formata CPFs como `XXX.XXX.XXX-XX` e normaliza o tipo de documento para maiúsculas.
+
+Payloads sem `rodovia` / `fiscalId` (inspeções) ou sem `rodovia` / `km` (acidentes) recebem `400 Bad Request`.
 
 ---
 
-## Esquema do Banco de Dados
+## 🗄️ Modelo de dados
 
-```sql
-Inspecoes
-  Id            UNIQUEIDENTIFIER  PK
-  Rodovia       NVARCHAR(100)
-  KmInicial     NVARCHAR(20)
-  KmFinal       NVARCHAR(20)
-  FiscalId      NVARCHAR(50)
-  Status        NVARCHAR(20)      DEFAULT 'PROCESSANDO'
-  RecebidoEm   DATETIME2
-  ProcessadoEm DATETIME2
-
-ItensChecklist
-  Id          UNIQUEIDENTIFIER  PK
-  InspecaoId  UNIQUEIDENTIFIER  FK → Inspecoes(Id)
-  Ordem       INT               NOT NULL
-  Descricao   NVARCHAR(255)
-  Conforme    BIT
-  INDEX IX_ItensChecklist_InspecaoId_Ordem (InspecaoId, Ordem)
-
-Acidentes
-  Id           UNIQUEIDENTIFIER  PK
-  Rodovia      NVARCHAR(100)
-  Km           NVARCHAR(20)
-  TipoAcidente NVARCHAR(100)
-  RecebidoEm  DATETIME2
-  ProcessadoEm DATETIME2
-
-Vitimas
-  Id              UNIQUEIDENTIFIER  PK
-  AcidenteId      UNIQUEIDENTIFIER  FK → Acidentes(Id)
-  NomeSanitizado  NVARCHAR(200)
-  Documento       NVARCHAR(20)
-  TipoDocumento   NVARCHAR(10)
+```mermaid
+erDiagram
+    Inspecoes ||--o{ ItensChecklist : possui
+    Acidentes ||--o{ Vitimas : possui
+    Inspecoes {
+        uniqueidentifier Id PK
+        nvarchar Rodovia
+        nvarchar KmInicial
+        nvarchar KmFinal
+        nvarchar FiscalId
+        nvarchar Status
+        datetime2 RecebidoEm
+        datetime2 ProcessadoEm
+    }
+    ItensChecklist {
+        uniqueidentifier Id PK
+        uniqueidentifier InspecaoId FK
+        int Ordem
+        nvarchar Descricao
+        bit Conforme
+    }
+    Acidentes {
+        uniqueidentifier Id PK
+        nvarchar Rodovia
+        nvarchar Km
+        nvarchar TipoAcidente
+        datetime2 RecebidoEm
+        datetime2 ProcessadoEm
+    }
+    Vitimas {
+        uniqueidentifier Id PK
+        uniqueidentifier AcidenteId FK
+        nvarchar NomeSanitizado
+        nvarchar Documento
+        nvarchar TipoDocumento
+    }
 ```
 
-A coluna `Ordem` em `ItensChecklist` é `NOT NULL` por design — a regra de negócio é reforçada a nível de banco de dados, não apenas no código. O índice composto em `(InspecaoId, Ordem)` garante performance na validação de sequência em larga escala.
+`ItensChecklist.Ordem` é `NOT NULL` e tem índice composto em `(InspecaoId, Ordem)`, então a regra é reforçada também no banco e a consulta por sequência continua rápida com volume alto.
 
 ---
 
-## Decisões Chave de Arquitetura
+## 🧠 Decisões de arquitetura
 
-### 1. API retorna HTTP 202, nunca 200
-
-A API não salva nada diretamente no banco de dados. Ela publica um evento e retorna `202 Accepted` — a semântica correta para operações assíncronas. Um `200 OK` implicaria que o trabalho já foi concluído.
-
-### 2. Filas separadas por domínio
-
-A `inspecoes-queue` e a `acidentes-queue` são intencionalmente separadas. Um pico de acidentes (ex: um grande engavetamento) não atrasa o processamento das inspeções de rotina. Isolamento de filas é um padrão fundamental de resiliência.
-
-### 3. Contratos em projeto dedicado
-
-O `HighwayMonitor.Contracts` é uma classlib. A API e o Worker não dependem um do outro — dependem apenas dos contratos. Isso permite deploys independentes: uma nova versão do Worker não exige redeployar a API.
-
-### 4. Sanitização centralizada no Worker
-
-Dados brutos das vítimas (CPFs desformatados, nomes com espaços, casing inconsistente) chegam direto dos dispositivos móveis. O Worker é a única fonte de verdade para qualidade dos dados — tornando as regras auditáveis, testáveis e centralizadas.
-
-### 5. Liquibase em vez de EF Migrations
-
-EF Migrations são acopladas ao runtime da aplicação. O Liquibase roda em container separado, tem suporte nativo a rollback e expõe as mudanças de schema como SQL puro no controle de versão — revisável por qualquer pessoa do time, incluindo DBAs.
+1. **`202 Accepted`, nunca `200 OK`.** A API não grava nada: publica o evento e devolve o `id`. `200` daria a entender que o trabalho já terminou.
+2. **Uma fila por domínio.** `inspecoes-queue` e `acidentes-queue` são isoladas, então um pico em uma não atrasa a outra.
+3. **Contratos em projeto próprio.** API e Worker dependem só de `HighwayMonitor.Contracts` e podem ser publicados de forma independente.
+4. **Sanitização centralizada no Worker.** Dados brutos vêm de dispositivos móveis, e o worker é a única fonte de verdade sobre a qualidade deles: as regras ficam auditáveis e testáveis em um só lugar.
+5. **Liquibase em vez de EF Migrations.** O schema vira SQL puro versionado, roda em um container separado do runtime da aplicação e pode ser revisado por qualquer pessoa do time, inclusive DBAs.
 
 ---
 
-## Fluxo de Desenvolvimento Local
+## 🗺️ Próximos passos
 
-Para rodar fora do Docker com iteração mais rápida:
+- [ ] Política de retry com backoff exponencial no MassTransit (`UseMessageRetry`) antes de enviar para a error queue
+- [ ] Transação única para gravar o cabeçalho e os itens (inspeção + checklist, acidente + vítimas)
+- [ ] Idempotência no consumer, usando o `Id` do evento
+- [ ] Padrão Outbox para garantir a publicação mesmo se o broker estiver fora
+- [ ] Testes de unidade das regras de sanitização e de integração com Testcontainers
+- [ ] Health checks (`/health`) e observabilidade com OpenTelemetry
+- [ ] Segredos via variáveis de ambiente / `.env` em vez de valores no `docker-compose.yml`
 
-```bash
-# Sobe apenas a infraestrutura
-docker compose up sqlserver rabbitmq liquibase -d
+---
 
-# API (terminal 1)
-cd src/HighwayMonitor.Api
-dotnet run
-
-# Worker (terminal 2)
-cd src/HighwayMonitor.Worker
-dotnet run
-```
-
-Os arquivos `appsettings.json` já estão pré-configurados para `localhost`.
+<p align="center">Desenvolvido por <a href="https://github.com/rbarboteu">Raphael Barboteu</a> · <a href="https://www.linkedin.com/in/raphael-barboteu-5827b223b/">LinkedIn</a></p>

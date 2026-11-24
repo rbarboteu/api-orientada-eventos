@@ -17,7 +17,7 @@ public class InspecaoRepository
     {
         using var connection = new SqlConnection(_connectionString);
 
-        // Salva a inspeção principal
+        // Salva a inspeÃ§Ã£o principal
         var inspecaoId = evento.Id;
 
         await connection.ExecuteAsync(@"

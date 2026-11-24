@@ -20,7 +20,7 @@ public class InspecaoConsumer : IConsumer<InspecaoRecebidaEvent>
         var evento = context.Message;
 
         _logger.LogInformation(
-            "InspeÁ„o recebida | Id: {Id} | Rodovia: {Rodovia} | Fiscal: {FiscalId}",
+            "Inspe√ß√£o recebida | Id: {Id} | Rodovia: {Rodovia} | Fiscal: {FiscalId}",
             evento.Id, evento.Rodovia, evento.FiscalId);
 
         var checklistOrdenado = evento.Checklist.OrderBy(x => x.Ordem).ToList();
@@ -31,22 +31,22 @@ public class InspecaoConsumer : IConsumer<InspecaoRecebidaEvent>
             if (item.Ordem != ordemEsperada)
             {
                 _logger.LogError(
-                    "Checklist inv·lido! Esperava ordem {Esperado}, mas veio {Recebido}",
+                    "Checklist inv√°lido! Esperava ordem {Esperado}, mas veio {Recebido}",
                     ordemEsperada, item.Ordem);
 
                 throw new InvalidOperationException(
-                    $"Ordem do checklist inv·lida. Esperado: {ordemEsperada}, Recebido: {item.Ordem}");
+                    $"Ordem do checklist inv√°lida. Esperado: {ordemEsperada}, Recebido: {item.Ordem}");
             }
 
             _logger.LogInformation(
-                "  Passo {Ordem}: {Descricao} ? {Status}",
-                item.Ordem, item.Descricao, item.Conforme ? "CONFORME" : "N√O CONFORME");
+                "  Passo {Ordem}: {Descricao} -> {Status}",
+                item.Ordem, item.Descricao, item.Conforme ? "CONFORME" : "N√ÉO CONFORME");
 
             ordemEsperada++;
         }
 
         await _repository.SalvarAsync(evento);
 
-        _logger.LogInformation("InspeÁ„o {Id} salva no banco com sucesso.", evento.Id);
+        _logger.LogInformation("Inspe√ß√£o {Id} salva no banco com sucesso.", evento.Id);
     }
 }

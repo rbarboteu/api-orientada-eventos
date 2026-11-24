@@ -32,7 +32,7 @@ public class AcidenteConsumer : IConsumer<AcidenteRecebidoEvent>
         foreach (var vitima in vitimasProcessadas)
         {
             _logger.LogInformation(
-                "  Vítima: {Nome} | Documento sanitizado: {Documento}",
+                "  VÃ­tima: {Nome} | Documento sanitizado: {Documento}",
                 vitima.NomeSanitizado, vitima.Documento);
         }
 

@@ -24,7 +24,7 @@ var app = builder.Build();
 app.MapPost("/api/inspecoes", async (InspecaoPayload payload, ISendEndpointProvider sender) =>
 {
     if (string.IsNullOrWhiteSpace(payload.Rodovia) || string.IsNullOrWhiteSpace(payload.FiscalId))
-        return Results.BadRequest("Rodovia e FiscalId s„o obrigatÛrios.");
+        return Results.BadRequest("Rodovia e FiscalId s√£o obrigat√≥rios.");
 
     var evento = new InspecaoRecebidaEvent(
         Id: Guid.NewGuid(),
@@ -39,13 +39,13 @@ app.MapPost("/api/inspecoes", async (InspecaoPayload payload, ISendEndpointProvi
     var endpoint = await sender.GetSendEndpoint(new Uri("queue:inspecoes-queue"));
     await endpoint.Send(evento);
 
-    return Results.Accepted("/api/inspecoes", new { evento.Id, Mensagem = "InspeÁ„o recebida e em processamento." });
+    return Results.Accepted("/api/inspecoes", new { evento.Id, Mensagem = "Inspe√ß√£o recebida e em processamento." });
 });
 
 app.MapPost("/api/acidentes", async (AcidentePayload payload, ISendEndpointProvider sender) =>
 {
     if (string.IsNullOrWhiteSpace(payload.Rodovia) || string.IsNullOrWhiteSpace(payload.Km))
-        return Results.BadRequest("Rodovia e Km s„o obrigatÛrios.");
+        return Results.BadRequest("Rodovia e Km s√£o obrigat√≥rios.");
 
     var evento = new AcidenteRecebidoEvent(
         Id: Guid.NewGuid(),
